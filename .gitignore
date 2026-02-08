@@ -1,0 +1,5 @@
+.venv
+venv
+__pycache__
+config.json
+guests.db
