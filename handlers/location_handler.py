@@ -1,5 +1,6 @@
 import telebot
 from telebot import types
+from utils.logger import logger
 
 def register_handlers(bot: telebot.TeleBot):
     @bot.message_handler(func=lambda message: message.text == '📍 Место проведения')

@@ -1,11 +1,13 @@
-import telebot
-from telebot import types
-import json
-from database.db import get_all_preferences
-import openpyxl
-from openpyxl.styles import Font, Alignment
 import os
-import re
+import time
+import json
+import openpyxl
+import telebot
+
+from openpyxl.styles import Font, Alignment
+
+from utils.logger import logger
+from database.db import get_all_preferences, get_all_chat_ids, get_chat_ids
 
 
 def register_handlers(bot: telebot.TeleBot):
@@ -14,14 +16,14 @@ def register_handlers(bot: telebot.TeleBot):
             config = json.load(f)
             return config.get("admin_ids", [])
 
-    @bot.message_handler(func=lambda message: message.text == '📋 Просмотреть гостей')
+    @bot.message_handler(func=lambda message: message.text == '📋 Выгрузка списка гостей')
     def view_guests(message):
         if message.from_user.id not in get_admin_ids():
             bot.send_message(message.chat.id, "У вас нет прав для выполнения этой операции.")
             return
             
         guests = get_all_preferences()
-        
+        logger.info(f'Получены данные гостей: {guests}')
         if not guests:
             bot.send_message(message.chat.id, "База данных пуста.")
             return
@@ -35,33 +37,32 @@ def register_handlers(bot: telebot.TeleBot):
         os.remove(filename)
 
     def create_excel_file(guests):
+        logger.info('Create excel file with info about all guests')
         wb = openpyxl.Workbook()
         ws = wb.active
-        ws.title = "Гости"
+        ws.title = "Гости" # type: ignore
         
         # Заголовки
-        headers = ["ID", "Telegram ID", "Username", "ФИО (регистрация)", "Еда", "Напиток", "ФИО (еда/напитки)", "Дата обновления"]
+        headers = ["ФИО (регистрация)", "Telegram", "ФИО гостя", "Еда", "Напиток", "Дата обновления"]
         for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=1, column=col_num)
-            cell.value = header
+            cell = ws.cell(row=1, column=col_num) # type: ignore
+            cell.value = header # type: ignore
             cell.font = Font(bold=True)
             cell.alignment = Alignment(horizontal="center")
         
         # Данные
         for row_idx, guest in enumerate(guests, 2):
-            ws.cell(row=row_idx, column=1, value=guest[0])
-            ws.cell(row=row_idx, column=2, value=guest[1])
-            ws.cell(row=row_idx, column=3, value=f"@{guest[2]}" if guest[2] else "не указан")
-            ws.cell(row=row_idx, column=4, value=guest[3])
-            ws.cell(row=row_idx, column=5, value=guest[4] if guest[4] else "не указано")
-            ws.cell(row=row_idx, column=6, value=guest[5] if guest[5] else "не указано")
-            ws.cell(row=row_idx, column=7, value=guest[6] if guest[6] else "не указано")
-            ws.cell(row=row_idx, column=8, value=str(guest[7]))
+            ws.cell(row=row_idx, column=1, value=guest[0]) # type: ignore
+            ws.cell(row=row_idx, column=2, value=f"https://t.me/{guest[1]}" if guest[1] else "не указан") # pyright: ignore[reportOptionalMemberAccess]
+            ws.cell(row=row_idx, column=3, value=guest[2]) # type: ignore
+            ws.cell(row=row_idx, column=4, value=guest[3] if guest[3] else "не указано")  # type: ignore
+            ws.cell(row=row_idx, column=5, value=guest[4] if guest[4] else "не указано")  # type: ignore # Напиток
+            ws.cell(row=row_idx, column=6, value=str(guest[5]))  # Дата обновления # type: ignore
         
         # Автоширина столбцов
-        for column in ws.columns:
+        for column in ws.columns: # type: ignore
             max_length = 0
-            column_letter = column[0].column_letter
+            column_letter = column[0].column_letter # type: ignore
             for cell in column:
                 try:
                     if len(str(cell.value)) > max_length:
@@ -69,62 +70,73 @@ def register_handlers(bot: telebot.TeleBot):
                 except:
                     pass
             adjusted_width = min(max_length + 2, 50)
-            ws.column_dimensions[column_letter].width = adjusted_width
+            ws.column_dimensions[column_letter].width = adjusted_width # type: ignore
         
         filename = "guests.xlsx"
         wb.save(filename)
         return filename
 
-    @bot.message_handler(func=lambda message: message.text == '✏️ Изменить данные')
-    def request_guest_id(message):
+    @bot.message_handler(func=lambda message: message.text == '📨 Отправить сообщение всем пользователям бота')
+    def request_broadcast_message(message):
         if message.from_user.id not in get_admin_ids():
             bot.send_message(message.chat.id, "У вас нет прав для выполнения этой операции.")
             return
-            
-        bot.send_message(message.chat.id, "Введите ID гостя, данные которого вы хотите изменить:")
-        bot.register_next_step_handler(message, process_guest_id_step)
-
-    
-    def process_guest_id_step(message):
-        try:
-            guest_id = int(message.text)
-            bot.send_message(message.chat.id, f"Введите новые данные для гостя {guest_id}.\nФормат: Имя Фамилия;Еда;Напиток\nПример: Иван Петров;Мясо;Водка")
-            bot.register_next_step_handler(message, lambda msg: process_update_data_step(msg, guest_id))
-        except ValueError:
-            bot.send_message(message.chat.id, "Неверный формат ID. Попробуйте снова.")
-            
-    def process_update_data_step(message, guest_id):
-        try:
-            parts = message.text.split(';')
-            if len(parts) != 3:
-                bot.send_message(message.chat.id, "Неверный формат данных. Используйте: ФИО;Еда;Напиток")
-                return
-                
-            full_name, food, drink = [part.strip() for part in parts]
-            from database.db import update_guest_info
-            success = update_guest_info(guest_id, full_name, food, drink)
-            
-            if success:
-                bot.send_message(message.chat.id, f"Данные гостя {guest_id} успешно обновлены!")
-            else:
-                bot.send_message(message.chat.id, f"Гость с ID {guest_id} не найден.")
-                
-        except Exception as e:
-            bot.send_message(message.chat.id, f"Ошибка при обновлении данных: {str(e)}")
-
-        # Возвращаем админское меню
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        btn4 = types.KeyboardButton('📋 Просмотреть гостей')
-        btn5 = types.KeyboardButton('✏️ Изменить данные')
-        markup.add(btn4, btn5)
-        bot.send_message(message.chat.id, "Возврат в меню администратора:", reply_markup=markup)
-
-    @bot.message_handler(func=lambda message: message.text == '⬅️ Назад')
-    def go_back_to_main(message):
-        main_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        btn1 = types.KeyboardButton('👗 Дресс-код')
-        btn2 = types.KeyboardButton('📍 Место проведения')
-        btn3 = types.KeyboardButton('🍽 Пожелания по еде �� напиткам')
-        main_menu.add(btn1, btn2, btn3)
         
-        bot.send_message(message.chat.id, "Возврат в основное меню:", reply_markup=main_menu)
+        logger.info('Send message all users')
+        bot.send_message(message.chat.id, "Введите сообщение, которое хотите разослать всем зарегистрированным пользователям (ВНИМАНИЕ! Если сообщение содержит более 4096 символов, отправь его тестовому пользователю):")
+        bot.register_next_step_handler(message, process_broadcast_message)
+
+    def process_broadcast_message(message):
+        if message.from_user.id not in get_admin_ids():
+            bot.send_message(message.chat.id, "У вас нет прав для выполнения этой операции.")
+            return
+        # Warning: Do not send more than about 4096 characters each message, otherwise you'll risk an HTTP 414 error. If you must send more than 4096 characters, use the split_string or smart_split function in util.py.
+        broadcast_text = message.text
+        chat_ids = get_all_chat_ids()
+        
+        sent_count = 0
+        logger.info(f'Идет рассылка сообщения...')
+        bot.send_message(message.chat.id, f'Идет рассылка сообщения...')
+
+        for chat_id in chat_ids:
+            try:
+                bot.send_message(chat_id, broadcast_text)
+                sent_count += 1
+                time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение в чат {chat_id}: {str(e)}")
+        
+        logger.info(f'Сообщение успешно отправлено {sent_count} пользователям')
+        bot.send_message(message.chat.id, f"Рассылка завершена! Сообщение успешно отправлено {sent_count} пользователям.")
+
+
+    @bot.message_handler(func=lambda message: message.text == 'Отправить сообщение ТЕСТОВЫМ пользователям')
+    def request_broadcast_message_to_test_users(message):
+        if message.from_user.id not in get_admin_ids():
+            bot.send_message(message.chat.id, "У вас нет прав для выполнения этой операции.")
+            return
+        
+        logger.info('Send message test users')
+        bot.send_message(message.chat.id, "Введите сообщение, которое хотите отправить ТЕСТОВЫМ пользователям:")
+        bot.register_next_step_handler(message, process_broadcast_message_to_test_users)
+
+    def process_broadcast_message_to_test_users(message):
+        if message.from_user.id not in get_admin_ids():
+            bot.send_message(message.chat.id, "У вас нет прав для выполнения этой операции.")
+            return
+        # Warning: Do not send more than about 4096 characters each message, otherwise you'll risk an HTTP 414 error. If you must send more than 4096 characters, use the split_string or smart_split function in util.py.
+        broadcast_text = message.text
+        config = json.load(open('config.json', 'r'))
+        user_ids = config['test_users_id']
+        chat_ids = get_chat_ids(user_ids)
+        
+        for chat_id in chat_ids:
+            try:
+                logger.info(f'Высылаю сообщение в чат {chat_id = }')
+                bot.send_message(chat_id, broadcast_text)
+                time.sleep(0.5)
+            except Exception as e:
+                logger.error(f"Не удалось отправить сообщение в чат {chat_id}: {str(e)}")
+        
+        logger.info(f'Сообщение успешно отправлено пользователям {user_ids = }')
+        bot.send_message(message.chat.id, f"Сообщение успешно отправлено пользователям {user_ids = }")
