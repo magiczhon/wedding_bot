@@ -2,8 +2,9 @@
 venv
 __pycache__
 config.json
-guests.db
-.DS_Store
+event.yaml
+*.db
 bot.log
+.DS_Store
 .vscode
 .pytest_cache

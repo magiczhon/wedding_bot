@@ -1,0 +1,17 @@
+{
+    "db_name": "guests.db",
+    "telegram": {
+        "token": "TELEGRAM_BOT_TOKEN"
+    },
+    "vk": {
+        "token": "VK_COMMUNITY_TOKEN",
+        "group_id": 123456789
+    },
+    "admins": {
+        "telegram": [111111111],
+        "vk": [222222222]
+    },
+    "test_users": {
+        "telegram": [111111111]
+    }
+}

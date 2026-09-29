@@ -1,102 +1,64 @@
+"""Запуск бота-приглашения сразу в нескольких мессенджерах.
+
+    python main.py                         # config.json и event.yaml из текущей папки
+    python main.py --config my.json --event wedding.yaml
+"""
+import argparse
 import json
-import telebot
+import threading
+from pathlib import Path
 
+import yaml
+
+from core.bot import WeddingBot
+from database.db import Database
 from utils.logger import logger
-from telebot import types
-from handlers import dreskcode_handler, location_handler, food_drink_handler, admin_handler
-from database.db import init_db, is_user_registered
-
-logger.info('Start app')
-# Инициализация бота
-config = json.load(open('config.json', 'r'))
-API_TOKEN = config["token_id"]
-ADMIN_IDS = config["admin_ids"]
-
-bot = telebot.TeleBot(API_TOKEN)
-
-# Инициализация базы данных
-init_db()
-
-# Основное меню
-main_menu = types.ReplyKeyboardMarkup(resize_keyboard=True)
-btn1 = types.KeyboardButton('👗 Дресс-код')
-btn2 = types.KeyboardButton('📍 Место проведения')
-btn3 = types.KeyboardButton('🍽 Добавить пожелания по еде и напиткам гостя')
-main_menu.add(btn1, btn2, btn3)
-
-# Меню администратора
-admin_menu = types.ReplyKeyboardMarkup(resize_keyboard=True,)
-btn4 = types.KeyboardButton('📋 Выгрузка списка гостей')
-btn5 = types.KeyboardButton('📨 Отправить сообщение всем пользователям бота')
-btn6 = types.KeyboardButton('Отправить сообщение ТЕСТОВЫМ пользователям')
-admin_menu.add(btn4, btn5, btn6)
 
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.from_user.id
-    logger.info(f'Попытка авторизации пользователя {user_id = }')
-    # Проверяем, является ли пользователь администратором
-    if user_id in ADMIN_IDS:
-        bot.send_message(user_id, "Добро пожаловать, администратор! 🎯\nВы можете управлять данными гостей.\nДля переключения в режим пользователя используйте команду /user", reply_markup=admin_menu)
-        return
-    
-    # Обычный пользователь
-    if not is_user_registered(user_id):
-        bot.send_message(user_id, "Добро пожаловать на свадебное приглашение! 🎉\nДля продолжения, пожалуйста, введите ваше полное имя (ФИО):")
-        bot.register_next_step_handler(message, process_name_step)
-    else:
-        logger.info(f'Пользователь {user_id = } зашел в бота')
-        bot.reply_to(message, "Рады вас снова видеть! 🥂\nВыберите один из пунктов ниже:", reply_markup=main_menu)
+def load_config(path: str) -> dict:
+    config = json.loads(Path(path).read_text(encoding='utf-8'))
+    # Совместимость со старым форматом: token_id + admin_ids (только Telegram)
+    if 'token_id' in config and 'telegram' not in config:
+        config['telegram'] = {'token': config.pop('token_id')}
+    if isinstance(config.get('admin_ids'), list):
+        config.setdefault('admins', {})['telegram'] = config.pop('admin_ids')
+    if isinstance(config.get('test_users_id'), list):
+        config.setdefault('test_users', {})['telegram'] = config.pop('test_users_id')
+    return config
 
 
-def process_name_step(message):
-    user_id = message.from_user.id
-    chat_id = message.chat.id
-    full_name = message.text.strip()
-    username = message.from_user.username
-    tg_name = message.from_user.first_name
-    
-    if not full_name or len(full_name.split()) < 2:
-        bot.send_message(message.chat.id, "Пожалуйста, имя И фамилию (и отчество, если хотите):")
-        bot.register_next_step_handler(message, process_name_step)
-        return
-    
-    # Сохраняем ФИО и user_id в базу
-    logger.info(f'Register user {user_id = }, {username = }, {full_name = }, {chat_id = }')
-    from database.db import save_user_info
-    save_user_info(user_id, chat_id, username, tg_name, full_name)
-     
-    bot.send_message(message.chat.id, f"Спасибо, {full_name}! Вы успешно зарегистрированы.\nТеперь вы можете воспользоваться функциями бота.", reply_markup=main_menu)
-    
+def main():
+    parser = argparse.ArgumentParser(description='Бот-приглашение на мероприятие')
+    parser.add_argument('--config', default='config.json', help='секреты: токены, админы (config.json)')
+    parser.add_argument('--event', default='event.yaml', help='тексты и настройки мероприятия (event.yaml)')
+    args = parser.parse_args()
 
-@bot.message_handler(commands=['admin'])
-def switch_to_admin(message):
-    user_id = message.from_user.id
-    if user_id in ADMIN_IDS:
-        logger.info(f'Switch to admin ({user_id = })')
-        bot.send_message(user_id, "Вы переключились в режим администратора. 🎯\nДля переключения обратно используйте команду /user", reply_markup=admin_menu)
-    else:
-        logger.info(f'Unsuccessful try switch to admin ({user_id = })')
-        bot.send_message(message.chat.id, "У вас нет прав администратора.")
+    config = load_config(args.config)
+    event = yaml.safe_load(Path(args.event).read_text(encoding='utf-8'))
+    db = Database(config.get('db_name', 'guests.db'))
+    bot = WeddingBot(db, event, admins=config.get('admins', {}), test_users=config.get('test_users', {}))
 
+    runners = []
+    if config.get('telegram', {}).get('token'):
+        from adapters.telegram_adapter import TelegramMessenger
+        tg = TelegramMessenger(config['telegram']['token'], bot.handle)
+        bot.register(tg)
+        runners.append(tg)
+    if config.get('vk', {}).get('token'):
+        from adapters.vk_adapter import VkMessenger
+        vk = VkMessenger(config['vk']['token'], config['vk']['group_id'], bot.handle)
+        bot.register(vk)
+        runners.append(vk)
+    if not runners:
+        raise SystemExit('В config.json не указан ни один мессенджер (telegram.token или vk.token)')
 
-@bot.message_handler(commands=['user'])
-def switch_to_user(message):
-    user_id = message.from_user.id
-    # Все пользователи могут переключиться в режим обычного пользователя
-    if is_user_registered(user_id):
-        bot.send_message(user_id, "Вы переключились в режим пользователя.", reply_markup=main_menu)
-    else:
-        bot.send_message(user_id, "Для начала, пожалуйста, введите ваше полное имя (ФИО):")
-        bot.register_next_step_handler(message, process_name_step)
+    logger.info(f"Starting: {', '.join(r.title for r in runners)}")
+    threads = [threading.Thread(target=r.run, name=r.name, daemon=True) for r in runners]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
 
-
-# Регистрация обработчиков
-dreskcode_handler.register_handlers(bot)
-location_handler.register_handlers(bot)
-food_drink_handler.register_handlers(bot)
-admin_handler.register_handlers(bot)
 
 if __name__ == '__main__':
-    bot.polling(none_stop=True)
+    main()
