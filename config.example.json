@@ -1,7 +1,9 @@
 {
     "db_name": "guests.db",
     "telegram": {
-        "token": "TELEGRAM_BOT_TOKEN"
+        "token": "TELEGRAM_BOT_TOKEN",
+        "api_url": "",
+        "proxy": ""
     },
     "vk": {
         "token": "VK_COMMUNITY_TOKEN",

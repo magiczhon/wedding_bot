@@ -69,6 +69,24 @@ def test_telegram_parses_start_payload_reply_and_photo(tg):
     assert inc.attachments[0].kind == 'other' and inc.attachments[0].description == 'голосовое сообщение'
 
 
+def test_telegram_requests_go_through_relay_when_configured(monkeypatch):
+    from adapters.telegram_adapter import configure_network
+    for name in ('API_URL', 'FILE_URL', 'proxy'):
+        monkeypatch.setattr(apihelper, name, None)
+    urls = []
+
+    def sender(method, url, **kwargs):
+        urls.append((url, kwargs.get('proxies')))
+        return FakeResponse({'ok': True, 'result': TG_BOT})
+
+    monkeypatch.setattr(apihelper, 'CUSTOM_REQUEST_SENDER', sender)
+    configure_network('https://relay.example.com/', 'socks5h://proxy:1080')
+    TelegramMessenger('123:ABC', lambda inc: None).bot.get_me()
+    assert urls == [('https://relay.example.com/bot123:ABC/getMe',
+                     {'http': 'socks5h://proxy:1080', 'https': 'socks5h://proxy:1080'})]
+    assert apihelper.FILE_URL == 'https://relay.example.com/file/bot{0}/{1}'
+
+
 def test_telegram_send_keyboard_remove_and_long_text(tg):
     messenger, calls, received = tg
     mid = messenger.send('100', 'Меню', [['A', 'B'], ['C']])

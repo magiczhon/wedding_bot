@@ -51,7 +51,8 @@ def build(config: dict):
     runners = []
     if config.get('telegram', {}).get('token'):
         from adapters.telegram_adapter import TelegramMessenger
-        tg = TelegramMessenger(config['telegram']['token'], bot.handle)
+        tg = TelegramMessenger(config['telegram']['token'], bot.handle,
+                               api_url=config['telegram'].get('api_url'), proxy=config['telegram'].get('proxy'))
         bot.register(tg)
         runners.append(tg)
     if config.get('vk', {}).get('token'):
