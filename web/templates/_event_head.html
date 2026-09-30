@@ -1,0 +1,17 @@
+<div class="event-head">
+  <div>
+    <h1>{{ event.title }}</h1>
+    <p class="sub" style="margin-bottom: 0;">
+      Код гостей <span class="code">{{ event.code }}</span>
+      · <span class="pill {{ 'archived' if event.status == 'archived' else 'yes' }}">{{ 'в архиве' if event.status == 'archived' else 'активно' }}</span>
+      {% if event.guest_limit %}· лимит гостей {{ event.guest_limit }}{% endif %}
+      {% if event.config.event.date_time %}· {{ event.config.event.date_time }}{% endif %}
+    </p>
+  </div>
+  <a class="btn secondary" href="{{ url_for('event_export', event_id=event.id) }}">⬇ Выгрузка в Excel</a>
+</div>
+<nav class="tabs" aria-label="Разделы мероприятия">
+  {% for key, endpoint, label in [('overview', 'event_overview', 'Обзор'), ('guests', 'event_guests', 'Гости'), ('team', 'event_team', 'Команда'), ('messages', 'event_messages', 'Сообщения'), ('broadcast', 'event_broadcast', 'Рассылка'), ('settings', 'event_settings', 'Настройки')] %}
+  <a href="{{ url_for(endpoint, event_id=event.id) }}" class="{{ 'on' if tab == key }}" {% if tab == key %}aria-current="page"{% endif %}>{{ label }}</a>
+  {% endfor %}
+</nav>

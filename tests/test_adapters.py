@@ -69,6 +69,24 @@ def test_telegram_parses_start_payload_reply_and_photo(tg):
     assert inc.attachments[0].kind == 'other' and inc.attachments[0].description == 'голосовое сообщение'
 
 
+def test_telegram_requests_go_through_relay_when_configured(monkeypatch):
+    from adapters.telegram_adapter import configure_network
+    for name in ('API_URL', 'FILE_URL', 'proxy'):
+        monkeypatch.setattr(apihelper, name, None)
+    urls = []
+
+    def sender(method, url, **kwargs):
+        urls.append((url, kwargs.get('proxies')))
+        return FakeResponse({'ok': True, 'result': TG_BOT})
+
+    monkeypatch.setattr(apihelper, 'CUSTOM_REQUEST_SENDER', sender)
+    configure_network('https://relay.example.com/', 'socks5h://proxy:1080')
+    TelegramMessenger('123:ABC', lambda inc: None).bot.get_me()
+    assert urls == [('https://relay.example.com/bot123:ABC/getMe',
+                     {'http': 'socks5h://proxy:1080', 'https': 'socks5h://proxy:1080'})]
+    assert apihelper.FILE_URL == 'https://relay.example.com/file/bot{0}/{1}'
+
+
 def test_telegram_send_keyboard_remove_and_long_text(tg):
     messenger, calls, received = tg
     mid = messenger.send('100', 'Меню', [['A', 'B'], ['C']])
@@ -153,31 +171,34 @@ def test_vk_send_returns_conversation_id_and_builds_keyboard(vk):
     assert 'vk.me/our_wedding' in messenger.invite_hint('XYZ')
 
 
-def test_end_to_end_guest_in_telegram_question_reaches_host_in_vk(tg, vk, tmp_path, monkeypatch):
-    import yaml
-    from pathlib import Path
-    from core.bot import WeddingBot
+def test_end_to_end_guest_in_telegram_question_reaches_host_in_vk(tg, vk, tmp_path):
+    from core.bot import BTN_AGREE, BTN_MENU, WeddingBot
+    from core.event_config import default_config
     from database.db import Database
 
     tg_messenger, tg_calls, _ = tg
     vk_messenger, vk_calls = vk
-    event = yaml.safe_load((Path(__file__).parent.parent / 'event.example.yaml').read_text(encoding='utf-8'))
     db = Database(str(tmp_path / 'e2e.db'))
-    bot = WeddingBot(db, event, admins={'telegram': ['1']})
+    bot = WeddingBot(db, privacy={'operator': 'ИП Тестов'})
     bot.register(tg_messenger)
     bot.register(vk_messenger)
+    event = db.create_event('Свадьба', default_config())
 
-    code = db.invite_codes(['host'])['host']
+    host_code = db.invite_codes(event['id'], ['host'])['host']
     host_msg = lambda text, cmid, **kw: vk_messenger.to_incoming(
         {'from_id': 20, 'peer_id': 20, 'conversation_message_id': cmid, 'text': text, **kw})
-    bot.handle(host_msg(f'код {code}', 1))
-    bot.handle(host_msg('Олег Ведущий', 2))
+    bot.handle(host_msg('', 1, ref=f'join_{host_code}'))  # переход по ссылке vk.me/...?ref=
+    bot.handle(host_msg(BTN_AGREE, 2))
+    bot.handle(host_msg('Олег Ведущий', 3))
+    assert db.members(event['id'], roles=['host'])[0]['full_name'] == 'Олег Ведущий'
 
-    bot.handle(tg_messenger.to_incoming(tg_message(text='/start')))
-    bot.handle(tg_messenger.to_incoming(tg_message(text='Петр Иванов')))
-    bot.handle(tg_messenger.to_incoming(tg_message(text='🏠 Главное меню')))
-    bot.handle(tg_messenger.to_incoming(tg_message(text=event['guest_channels']['host']['button'])))
-    bot.handle(tg_messenger.to_incoming(tg_message(text='Можно песню для мамы?')))
+    guest = lambda text: bot.handle(tg_messenger.to_incoming(tg_message(text=text)))
+    guest(f"/start ev_{event['code']}")
+    guest(BTN_AGREE)
+    guest('Петр Иванов')
+    guest(BTN_MENU)
+    guest(event['config']['guest_channels']['host']['button'])
+    guest('Можно песню для мамы?')
 
     question = [c for c in vk_calls if c[0] == 'messages.send'][-1]
     assert 'песню для мамы' in question[1]['message'] and 'Петр Иванов' in question[1]['message']
@@ -186,3 +207,5 @@ def test_end_to_end_guest_in_telegram_question_reaches_host_in_vk(tg, vk, tmp_pa
     bot.handle(host_msg('Конечно!', 50, reply_message={'from_id': -42, 'conversation_message_id': question_cmid}))
     answer = [c for c in tg_calls if c[0] == 'sendMessage'][-1]
     assert 'Конечно!' in answer[1]['text'] and 'Олег Ведущий' in answer[1]['text']
+    assert tg_messenger.guest_link(event['code']) == f"https://t.me/wedding_bot?start=ev_{event['code']}"
+    assert vk_messenger.guest_link(event['code']).startswith('https://vk.me/our_wedding?ref=ev_')

@@ -1,0 +1,48 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Команда · {{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Кто подключился</h2>
+    {% if team %}
+    <div class="table-wrap"><table>
+      <thead><tr><th>Роль</th><th>Имя</th><th>Мессенджер</th><th></th></tr></thead>
+      <tbody>
+      {% for t in team %}
+      <tr>
+        <td>{{ roles.get(t.role, t.role) }}</td>
+        <td>{{ t.full_name }}{% if t.username %}<div class="muted small">@{{ t.username }}</div>{% endif %}</td>
+        <td>{{ platform_title(t.platform) }}</td>
+        <td><form class="inline" method="post" action="{{ url_for('member_delete', event_id=event.id, user_id=t.id) }}"
+                  onsubmit="return confirm('Убрать {{ t.full_name|e }} из команды и удалить его данные в этом мероприятии?');">
+          {{ m.csrf_field() }}<input type="hidden" name="back" value="{{ url_for('event_team', event_id=event.id) }}">
+          <button class="link small">Убрать</button></form></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="muted">Пока никто. Отправьте каждому участнику код его роли.</p>{% endif %}
+    {% set joined = team | map(attribute='role') | list %}
+    {% set missing = [] %}{% for role, title in roles.items() if role not in joined %}{% set _ = missing.append(title) %}{% endfor %}
+    {% if missing %}<p class="small muted">Ещё не подключились: {{ missing | join(', ') }}.</p>{% endif %}
+  </div>
+  <div class="card">
+    <h2>Коды приглашения</h2>
+    <p class="small muted">Каждый код даёт свою роль и доступ к рабочим чатам этой роли. Если код попал не в те руки — выдайте новый.</p>
+    {% for role, title, code, hints in links.invites %}
+    <div style="padding: 10px 0; border-top: 1px solid var(--grid);">
+      <div class="actions" style="justify-content: space-between;">
+        <b>{{ title }}</b>
+        <span><span class="code">{{ code }}</span>
+        <form class="inline" method="post" action="{{ url_for('invite_regenerate', event_id=event.id, role=role) }}"
+              onsubmit="return confirm('Выдать новый код? Старый перестанет работать.');">
+          {{ m.csrf_field() }}<button class="link small">новый код</button></form></span>
+      </div>
+      {% for h in hints %}<div class="small muted">{{ h }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

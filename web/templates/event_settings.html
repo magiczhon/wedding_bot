@@ -1,0 +1,74 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Настройки · {{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+{% set ev = config.get('event', {}) %}{% set place = ev.get('place') or {} %}{% set menu = config.get('menu', {}) %}
+{% macro v(name, default) -%}{{ form.get(name, '') if form else default }}{%- endmacro %}
+<form method="post" class="stack-gap">
+  {{ m.csrf_field() }}
+  <div class="card">
+    <h2>Мероприятие</h2>
+    <label for="title">Название</label><input type="text" id="title" name="title" value="{{ v('title', event.title) }}" required>
+    <label for="welcome">Приветствие (первое, что видит гость)</label><textarea id="welcome" name="welcome">{{ v('welcome', ev.get('welcome', '')) }}</textarea>
+    <div class="row">
+      <div><label for="date_time">Дата и время</label><input type="text" id="date_time" name="date_time" value="{{ v('date_time', ev.get('date_time', '')) }}"></div>
+      <div><label for="rsvp_deadline">Срок ответа (например «до 1 мая»)</label><input type="text" id="rsvp_deadline" name="rsvp_deadline" value="{{ v('rsvp_deadline', ev.get('rsvp_deadline', '')) }}"></div>
+    </div>
+    <label class="actions" style="margin-top: 14px;"><input type="checkbox" name="archived" value="1" {{ 'checked' if (form and form.get('archived')) or (not form and event.status == 'archived') }}> Мероприятие прошло — перевести в архив (бот перестанет принимать гостей)</label>
+  </div>
+  <div class="card">
+    <h2>Место</h2>
+    <div class="row">
+      <div><label for="place_name">Название места</label><input type="text" id="place_name" name="place_name" value="{{ v('place_name', place.get('name', '')) }}"></div>
+      <div><label for="place_address">Адрес</label><input type="text" id="place_address" name="place_address" value="{{ v('place_address', place.get('address', '')) }}"></div>
+    </div>
+    <div class="row">
+      <div><label for="place_lat">Широта (для карты)</label><input type="text" id="place_lat" name="place_lat" value="{{ v('place_lat', place.get('lat', '') if place.get('lat') is not none else '') }}" placeholder="55.7558"></div>
+      <div><label for="place_lon">Долгота</label><input type="text" id="place_lon" name="place_lon" value="{{ v('place_lon', place.get('lon', '') if place.get('lon') is not none else '') }}" placeholder="37.6176"></div>
+    </div>
+    <label for="place_how_to_get">Как добраться</label><textarea id="place_how_to_get" name="place_how_to_get">{{ v('place_how_to_get', place.get('how_to_get', '')) }}</textarea>
+  </div>
+  <div class="card">
+    <h2>Для гостей</h2>
+    <label for="dresscode">Дресс-код</label><textarea id="dresscode" name="dresscode">{{ v('dresscode', ev.get('dresscode', '')) }}</textarea>
+    <label for="program">Программа (пусто — кнопки «Программа» не будет)</label><textarea id="program" name="program">{{ v('program', ev.get('program', '')) }}</textarea>
+    <div class="row">
+      <div><label for="rsvp_question">Вопрос о присутствии</label><input type="text" id="rsvp_question" name="rsvp_question" value="{{ v('rsvp_question', config.get('rsvp', {}).get('question', '')) }}"></div>
+      <div><label for="max_party_size">Максимум человек в одном ответе</label><input type="number" min="1" max="20" id="max_party_size" name="max_party_size" value="{{ v('max_party_size', config.get('rsvp', {}).get('max_party_size', 5)) }}"></div>
+    </div>
+    <div class="row">
+      <div><label for="food_question">Вопрос о блюде</label><input type="text" id="food_question" name="food_question" value="{{ v('food_question', menu.get('food', {}).get('question', '')) }}">
+        <label for="food_options">Варианты блюд — по одному в строке</label><textarea id="food_options" name="food_options">{{ v('food_options', menu.get('food', {}).get('options', []) | join('\n')) }}</textarea></div>
+      <div><label for="drink_question">Вопрос о напитках</label><input type="text" id="drink_question" name="drink_question" value="{{ v('drink_question', menu.get('drink', {}).get('question', '')) }}">
+        <label for="drink_options">Варианты напитков — по одному в строке</label><textarea id="drink_options" name="drink_options">{{ v('drink_options', menu.get('drink', {}).get('options', []) | join('\n')) }}</textarea></div>
+    </div>
+  </div>
+  <div class="card">
+    <details {{ 'open' if form }}>
+      <summary><b>Команда, каналы и рабочие чаты (YAML)</b> — роли подрядчиков, «Вопрос ведущему», чаты «организатор + молодожёны + подрядчик»</summary>
+      <p class="small muted">Например, чтобы добавить флориста: строку <span class="code">florist: Флорист</span> в roles и чат с <span class="code">roles: [organizer, couple, florist]</span> в rooms. Перед сохранением всё проверяется.</p>
+      <textarea class="code-area" name="advanced" spellcheck="false" aria-label="Расширенные настройки">{{ advanced }}</textarea>
+    </details>
+  </div>
+  {% if account.is_superadmin %}
+  <div class="card">
+    <h2>Тариф и владелец</h2>
+    <div class="row">
+      <div><label for="guest_limit">Лимит гостей (пусто — без лимита)</label><input type="number" min="1" id="guest_limit" name="guest_limit" value="{{ v('guest_limit', event.guest_limit or '') }}"></div>
+      <div><label for="owner">Организатор</label><select id="owner" name="owner"><option value="">— без владельца —</option>{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == event.owner_account_id }}>{{ a.name }} ({{ a.login }})</option>{% endfor %}</select></div>
+    </div>
+  </div>
+  {% endif %}
+  <div class="actions"><button>Сохранить</button><a class="btn secondary" href="{{ url_for('event_settings', event_id=event.id) }}">Отменить изменения</a></div>
+</form>
+<div class="card" style="margin-top: 24px; border-color: var(--danger);">
+  <h2>Удалить мероприятие</h2>
+  <p class="small">Удалятся гости, ответы, пожелания, сообщения и коды. Люди, которые больше нигде не участвуют, будут удалены полностью. Отменить нельзя — сначала сделайте выгрузку в Excel.</p>
+  <form method="post" action="{{ url_for('event_delete', event_id=event.id) }}" class="actions">
+    {{ m.csrf_field() }}
+    <input type="text" name="confirm" placeholder="Введите код {{ event.code }}" aria-label="Код мероприятия для подтверждения" style="width: 240px;" autocomplete="off">
+    <button class="danger">Удалить навсегда</button>
+  </form>
+</div>
+{% endblock %}

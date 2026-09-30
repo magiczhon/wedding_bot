@@ -1,0 +1,59 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Мероприятия{% endblock %}
+{% block content %}
+<div class="event-head">
+  <div>
+    <h1>{{ 'Сервис целиком' if stats else 'Мои мероприятия' }}</h1>
+    <p class="sub">{{ 'Все мероприятия и аккаунты' if stats else 'Свадьбы и события, которые вы ведёте' }}</p>
+  </div>
+  <a class="btn" href="{{ url_for('event_new') }}">+ Новое мероприятие</a>
+</div>
+
+{% if stats %}
+<div class="kpis">
+  {{ m.kpi('Мероприятия', stats.active, 'активных из ' ~ stats.events) }}
+  {{ m.kpi('Гости', stats.guests, 'ответили ' ~ stats.answered_pct ~ '%') }}
+  {{ m.kpi('Придут', stats.people, 'человек с учётом спутников') }}
+  {{ m.kpi('Команда', stats.team, 'ведущие, подрядчики, организаторы') }}
+  {{ m.kpi('Сообщения', stats.messages_30d, 'за 30 дней') }}
+  {{ m.kpi('Аккаунты', stats.accounts, 'в веб-панели') }}
+</div>
+<div class="grid cols-2" style="margin-bottom: 16px;">
+  <div class="card"><h2>Новые гости по дням</h2>{{ m.columns(stats.registrations) }}</div>
+  <div class="card"><h2>Мессенджеры гостей</h2>{{ m.hbars(stats.platforms_titled) }}</div>
+</div>
+{% elif totals %}
+<div class="kpis">
+  {{ m.kpi('Мероприятия', totals.active, 'активных из ' ~ totals.events) }}
+  {{ m.kpi('Гости', totals.guests, 'ответили ' ~ totals.answered_pct ~ '%') }}
+  {{ m.kpi('Придут', totals.people, 'человек с учётом спутников') }}
+  {{ m.kpi('Команда', totals.team, 'во всех мероприятиях') }}
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Мероприятия</h2>
+  {% if events %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Название</th><th>Код</th>{% if stats %}<th>Организатор</th>{% endif %}<th class="num">Гости</th><th class="num">Ответили</th><th class="num">Придут, чел.</th><th class="num">Команда</th><th>Статус</th></tr></thead>
+    <tbody>
+    {% for e in events %}
+    <tr>
+      <td><a href="{{ url_for('event_overview', event_id=e.id) }}">{{ e.title }}</a><div class="muted small">создано {{ e.created_at[:10] }}</div></td>
+      <td><span class="code">{{ e.code }}</span></td>
+      {% if stats %}<td>{{ e.owner_name or '—' }}</td>{% endif %}
+      <td class="num">{{ e.guests }}{% if e.guest_limit %}<span class="muted"> / {{ e.guest_limit }}</span>{% endif %}</td>
+      <td class="num">{{ (100 * e.answered / e.guests) | round | int if e.guests else 0 }}%</td>
+      <td class="num">{{ e.people }}</td>
+      <td class="num">{{ e.team }}</td>
+      <td><span class="pill {{ 'archived' if e.status == 'archived' else 'yes' }}">{{ 'в архиве' if e.status == 'archived' else 'активно' }}</span></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">Мероприятий пока нет. Создайте первое — бот сразу начнёт принимать гостей по его ссылке.</p>
+  {% endif %}
+</div>
+{% endblock %}

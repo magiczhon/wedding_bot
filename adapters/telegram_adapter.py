@@ -3,7 +3,7 @@ from io import BytesIO
 from typing import Optional
 
 import telebot
-from telebot import types
+from telebot import apihelper, types
 
 from core.messenger import Attachment, Incoming, Keyboard, Messenger
 from utils.logger import logger
@@ -26,11 +26,27 @@ def split_text(text: str, limit: int = MAX_TEXT):
     return parts + [text]
 
 
+def configure_network(api_url: Optional[str] = None, proxy: Optional[str] = None):
+    """Настройки pyTelegramBotAPI глобальные для процесса: задаются один раз при запуске"""
+    if api_url:
+        base = api_url.rstrip('/')
+        apihelper.API_URL = base + '/bot{0}/{1}'
+        apihelper.FILE_URL = base + '/file/bot{0}/{1}'
+        logger.info(f'Telegram API через {base}')
+    if proxy:
+        apihelper.proxy = {'http': proxy, 'https': proxy}
+        logger.info('Telegram API через прокси')
+
+
 class TelegramMessenger(Messenger):
     name = 'telegram'
     title = 'Telegram'
 
-    def __init__(self, token: str, on_message):
+    def __init__(self, token: str, on_message, api_url: Optional[str] = None, proxy: Optional[str] = None):
+        """api_url — адрес ретранслятора вместо https://api.telegram.org (например, https://tg-relay.example.com);
+        proxy — HTTP/SOCKS5-прокси, например socks5h://user:pass@host:1080.
+        Нужны, если с сервера в России api.telegram.org недоступен (см. HOSTING.md)."""
+        configure_network(api_url, proxy)
         self.bot = telebot.TeleBot(token)
         self.on_message = on_message
         self._me = None
@@ -126,6 +142,12 @@ class TelegramMessenger(Messenger):
 
     def invite_hint(self, code):
         return f'ссылка https://t.me/{self.me.username}?start=join_{code}'
+
+    def guest_hint(self, code):
+        return f'ссылка {self.guest_link(code)}'
+
+    def guest_link(self, code):
+        return f'https://t.me/{self.me.username}?start=ev_{code}'
 
     def run(self):
         logger.info(f'Telegram bot @{self.me.username} started')

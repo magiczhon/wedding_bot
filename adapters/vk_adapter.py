@@ -76,7 +76,9 @@ class VkMessenger(Messenger):
         return Incoming(platform=self.name, user_id=str(from_id), chat_id=str(msg['peer_id']),
                         message_id=str(msg.get('conversation_message_id')), text=msg.get('text', ''),
                         username=username, display_name=display_name, reply_to_id=reply_to,
-                        attachments=attachments, native=msg)
+                        attachments=attachments, native=msg,
+                        # переход по ссылке vk.me/<сообщество>?ref=... — как /start с параметром в Telegram
+                        start_payload=msg.get('ref') or None)
 
     def _user_names(self, user_id: int):
         if user_id not in self._names:
@@ -175,6 +177,13 @@ class VkMessenger(Messenger):
 
     def invite_hint(self, code):
         return f'написать сообществу vk.me/{self.screen_name} сообщение «код {code}»'
+
+    def guest_hint(self, code):
+        return f'написать сообществу vk.me/{self.screen_name} сообщение «код {code}»'
+
+    def guest_link(self, code):
+        # ref передаётся боту в первом сообщении после перехода по ссылке
+        return f'https://vk.me/{self.screen_name}?ref=ev_{code}'
 
     # ---------- цикл получения сообщений ----------
 

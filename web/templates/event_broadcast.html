@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Рассылка · {{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Новое сообщение</h2>
+    <form method="post" onsubmit="var s=this.audience.options[this.audience.selectedIndex].text; return confirm('Отправить: ' + s + '?');">
+      {{ m.csrf_field() }}
+      <label for="audience">Кому</label>
+      <select id="audience" name="audience">
+        {% for label, n in counts.items() %}<option value="{{ label }}" {{ 'selected' if form and form.get('audience') == label }}>{{ label }} — {{ n }} чел.</option>{% endfor %}
+      </select>
+      <label for="text">Сообщение</label>
+      <textarea id="text" name="text" maxlength="3500" required placeholder="Например: напоминаем, что трансфер отправляется в 15:00 от метро">{{ form.get('text', '') if form }}</textarea>
+      <p class="small muted">Сообщение придёт от бота в мессенджер каждого получателя. Ответы гостей попадут организаторам в бот и во вкладку «Сообщения».</p>
+      <button {{ 'disabled' if event.status != 'active' }}>Отправить</button>
+      {% if event.status != 'active' %}<span class="small muted">мероприятие в архиве</span>{% endif %}
+    </form>
+  </div>
+  <div class="card">
+    <h2>Прошлые рассылки</h2>
+    {% for msg in history %}
+      <div style="padding: 8px 0; border-top: 1px solid var(--grid);">
+        <div class="small muted">{{ msg.created_at[:16] }} · {{ msg.channel.split(':', 1)[1] }} · {{ msg.sender_name or 'веб-панель' }}</div>
+        <div style="white-space: pre-wrap;">{{ msg.text }}</div>
+      </div>
+    {% else %}<p class="muted">Рассылок ещё не было.</p>{% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends 'base.html' %}
+{% block title %}Сообщения · {{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+<div class="card">
+  <form method="get" class="actions" style="margin-bottom: 12px;">
+    <select name="channel" aria-label="Канал" style="width: auto;" onchange="this.form.submit()">
+      <option value="">Все каналы</option>
+      {% for key, label in channels.items() %}<option value="{{ key }}" {{ 'selected' if channel == key }}>{{ label }}</option>{% endfor %}
+    </select>
+    <noscript><button class="secondary">Показать</button></noscript>
+  </form>
+  {% if messages %}
+  <div class="table-wrap"><table>
+    <thead><tr><th>Время</th><th>Канал</th><th>От кого</th><th>Кому</th><th>Сообщение</th></tr></thead>
+    <tbody>
+    {% for msg in messages | reverse %}
+    <tr>
+      <td class="small" style="white-space: nowrap;">{{ msg.created_at[:16] }}</td>
+      <td class="small">{{ channel_title(msg.channel) }}</td>
+      <td>{{ msg.sender_name or '—' }}<div class="muted small">{{ role_title(msg.sender_role) if msg.sender_role else 'веб-панель' }}</div></td>
+      <td class="small">{{ msg.target_name or '' }}</td>
+      <td style="white-space: pre-wrap;">{{ msg.text }}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">Сообщений пока нет.</p>{% endif %}
+</div>
+{% endblock %}

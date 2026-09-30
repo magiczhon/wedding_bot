@@ -67,3 +67,11 @@ class Messenger:
     def invite_hint(self, code: str) -> str:
         """Как присоединиться к команде по коду в этом мессенджере"""
         return f'напишите боту: код {code}'
+
+    def guest_hint(self, code: str) -> str:
+        """Как гостю открыть приглашение по коду мероприятия"""
+        return f'напишите боту: код {code}'
+
+    def guest_link(self, code: str) -> Optional[str]:
+        """Прямая ссылка на приглашение (для рассылки гостям и QR-кода), если мессенджер её поддерживает"""
+        return None

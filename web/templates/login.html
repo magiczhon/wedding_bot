@@ -1,0 +1,16 @@
+{% extends 'base.html' %}
+{% block title %}Вход{% endblock %}
+{% block content %}
+<div class="card" style="max-width: 380px; margin: 60px auto;">
+  <h1>💍 Вход в панель</h1>
+  <p class="sub">Управление приглашениями и статистика</p>
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="login">Логин</label>
+    <input type="text" id="login" name="login" autocomplete="username" required autofocus>
+    <label for="password">Пароль</label>
+    <input type="password" id="password" name="password" autocomplete="current-password" required>
+    <p><button>Войти</button></p>
+  </form>
+</div>
+{% endblock %}
