@@ -1,0 +1,43 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Гости · {{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+<div class="card">
+  <form method="get" class="actions" style="margin-bottom: 12px;">
+    <select name="rsvp" aria-label="Фильтр по ответу" style="width: auto;">
+      <option value="">Все ({{ total }})</option>
+      {% for key, label in filters.items() %}<option value="{{ key }}" {{ 'selected' if rsvp_filter == key }}>{{ label }}</option>{% endfor %}
+    </select>
+    <input type="text" name="q" value="{{ q }}" placeholder="Поиск по имени" aria-label="Поиск по имени" style="width: 220px;">
+    <button class="secondary">Показать</button>
+  </form>
+  {% if guests %}
+  <div class="table-wrap"><table>
+    <thead><tr><th class="num">№</th><th>Гость</th><th>Ответ</th><th class="num">Человек</th><th>Пожелания по меню</th><th>Мессенджер</th><th>Зарегистрирован</th><th></th></tr></thead>
+    <tbody>
+    {% for x in guests %}
+    <tr>
+      <td class="num muted">{{ x.id }}</td>
+      <td>{{ x.full_name }}{% if x.username %}<div class="muted small">@{{ x.username }}</div>{% endif %}</td>
+      <td>{{ m.rsvp_pill(x.rsvp) }}</td>
+      <td class="num">{{ x.party_size if x.rsvp == 'yes' else '' }}</td>
+      <td class="small">{% for p in prefs.get(x.id, []) %}<div>{{ p.guest_name }}: {{ p.food }}, {{ p.drink }}</div>{% else %}<span class="muted">—</span>{% endfor %}</td>
+      <td>{{ platform_title(x.platform) }}</td>
+      <td class="small">{{ x.joined_at[:16] }}</td>
+      <td>
+        <form class="inline" method="post" action="{{ url_for('member_delete', event_id=event.id, user_id=x.id) }}"
+              onsubmit="return confirm('Удалить все данные гостя {{ x.full_name|e }} в этом мероприятии? Отменить нельзя.');">
+          {{ m.csrf_field() }}<input type="hidden" name="back" value="{{ request.full_path }}">
+          <button class="link small" title="По просьбе гостя: удалить имя, ответы и сообщения">Удалить данные</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}
+  <p class="muted">{{ 'Никого не нашлось по этому фильтру.' if total else 'Гостей пока нет — отправьте им ссылку со вкладки «Обзор».' }}</p>
+  {% endif %}
+</div>
+{% endblock %}

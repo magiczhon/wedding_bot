@@ -1,0 +1,28 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Новое мероприятие{% endblock %}
+{% block content %}
+<h1>Новое мероприятие</h1>
+<p class="sub">Остальное — тексты, меню, роли команды и рабочие чаты — заполнится из шаблона, поменять можно в «Настройках».</p>
+<div class="card" style="max-width: 640px;">
+  <form method="post">
+    {{ m.csrf_field() }}
+    <label for="title">Название *</label>
+    <input type="text" id="title" name="title" value="{{ form.get('title', '') }}" placeholder="Свадьба Анны и Ивана" required>
+    <label for="date_time">Дата и время</label>
+    <input type="text" id="date_time" name="date_time" value="{{ form.get('date_time', '') }}" placeholder="12 июня 2027, сбор гостей в 15:30">
+    <div class="row">
+      <div><label for="place_name">Место</label><input type="text" id="place_name" name="place_name" value="{{ form.get('place_name', '') }}" placeholder="Ресторан «Лебедь»"></div>
+      <div><label for="place_address">Адрес</label><input type="text" id="place_address" name="place_address" value="{{ form.get('place_address', '') }}"></div>
+    </div>
+    {% if account.is_superadmin %}
+    <div class="row">
+      <div><label for="owner">Организатор (владелец)</label>
+        <select id="owner" name="owner">{% for a in accounts %}<option value="{{ a.id }}" {{ 'selected' if a.id == account.id }}>{{ a.name }} ({{ a.login }})</option>{% endfor %}</select></div>
+      <div><label for="guest_limit">Лимит гостей (пусто — без лимита)</label><input type="number" min="1" id="guest_limit" name="guest_limit" value="{{ form.get('guest_limit', '') }}"></div>
+    </div>
+    {% endif %}
+    <p><button>Создать</button> <a class="btn secondary" href="{{ url_for('index') }}">Отмена</a></p>
+  </form>
+</div>
+{% endblock %}

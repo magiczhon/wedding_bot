@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}{{ event.title }}{% endblock %}
+{% block content %}
+{% include '_event_head.html' %}
+<div class="kpis">
+  {{ m.kpi('Гости', stats.guests, ('из ' ~ event.guest_limit) if event.guest_limit else 'зарегистрировались') }}
+  {{ m.kpi('Придут', stats.people, 'человек с учётом спутников') }}
+  {{ m.kpi('Ответили', stats.answered_pct ~ '%', stats.no_answer ~ ' ещё не ответили') }}
+  {{ m.kpi('Пожелания', stats.preferences, 'заполнено на гостей') }}
+  {{ m.kpi('Команда', stats.team, 'подключились к боту') }}
+  {{ m.kpi('Сообщения', stats.messages.guest + stats.messages.room, stats.messages.guest ~ ' от гостей, ' ~ stats.messages.room ~ ' в чатах') }}
+</div>
+
+<div class="grid cols-2">
+  <div class="card">
+    <h2>Ответы гостей</h2>
+    {{ m.stack([('Придут', stats.yes, '--s1'), ('Думают', stats.maybe, '--s3'), ('Не придут', stats.no, '--s2'), ('Нет ответа', stats.no_answer, '--neutral')], stats.guests) }}
+    {% if stats.no_answer %}<p class="small muted" style="margin-bottom: 0;">Напомнить тем, кто не ответил, можно во вкладке <a href="{{ url_for('event_broadcast', event_id=event.id) }}">«Рассылка»</a>.</p>{% endif %}
+  </div>
+  <div class="card"><h2>Новые гости по дням</h2>{{ m.columns(stats.registrations) }}</div>
+  <div class="card"><h2>Основное блюдо</h2>{{ m.hbars(stats.food, 'Пожеланий пока нет') }}</div>
+  <div class="card"><h2>Напитки</h2>{{ m.hbars(stats.drink, 'Пожеланий пока нет') }}</div>
+  <div class="card"><h2>Мессенджеры гостей</h2>{{ m.hbars(stats.platforms_titled) }}</div>
+  <div class="card">
+    <h2>Ссылки для гостей</h2>
+    {% for l in links.guest %}
+      <p style="margin: 6px 0;"><b>{{ l.title }}:</b>
+      {% if l.link %}<a href="{{ l.link }}" target="_blank" rel="noopener">{{ l.link }}</a>{% endif %}
+      {% if not l.link or l.link not in l.hint %}<br><span class="muted small">{{ 'или ' if l.link }}{{ l.hint }}</span>{% endif %}</p>
+    {% else %}
+      <p class="muted">Ни один мессенджер не подключён. Гости смогут войти по коду <span class="code">{{ event.code }}</span>.</p>
+    {% endfor %}
+    {% for e in links.errors %}<p class="small muted">⚠ {{ e }}</p>{% endfor %}
+    <p class="small muted" style="margin-bottom: 0;">Добавьте ссылку в электронное приглашение или сделайте из неё QR-код для печатного.</p>
+  </div>
+</div>
+{% endblock %}

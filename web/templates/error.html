@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block title %}Ошибка{% endblock %}
+{% block content %}
+<div class="card" style="max-width: 520px; margin: 40px auto;">
+  <h1>{{ {400: 'Запрос не выполнен', 403: 'Нет доступа', 404: 'Не найдено'}.get(error.code, 'Ошибка') }}</h1>
+  <p class="sub">{{ error.description if error.code == 400 else ('У вашего аккаунта нет прав на эту страницу.' if error.code == 403 else 'Такой страницы нет или у вас нет к ней доступа.') }}</p>
+  <a class="btn secondary" href="{{ url_for('index') }}">На главную</a>
+</div>
+{% endblock %}

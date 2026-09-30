@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}Мой аккаунт{% endblock %}
+{% block content %}
+<h1>Мой аккаунт</h1>
+<p class="sub">{{ account.name }} · логин {{ account.login }}</p>
+<div class="card" style="max-width: 420px;">
+  <h2>Сменить пароль</h2>
+  <form method="post">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label for="current">Текущий пароль</label>
+    <input type="password" id="current" name="current" autocomplete="current-password" required>
+    <label for="password">Новый пароль (не короче 8 символов)</label>
+    <input type="password" id="password" name="password" autocomplete="new-password" minlength="8" required>
+    <p><button>Сохранить</button></p>
+  </form>
+</div>
+{% endblock %}

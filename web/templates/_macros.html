@@ -1,0 +1,62 @@
+{# Показатель: подпись, крупное число, пояснение #}
+{% macro kpi(label, value, note='') -%}
+<div class="kpi"><div class="label">{{ label }}</div><div class="value">{{ value }}</div>{% if note %}<div class="note">{{ note }}</div>{% endif %}</div>
+{%- endmacro %}
+
+{# Горизонтальные столбики одного цвета: сравнение величин (еда, напитки, мессенджеры) #}
+{% macro hbars(items, empty='Пока нет данных') -%}
+{% set top = items | map(attribute=1) | max if items else 0 %}
+{% if items %}
+  {% for name, value in items %}
+  <div class="hbar" tabindex="0" data-tip="{{ name }}: {{ value }}">
+    <span class="name" title="{{ name }}">{{ name }}</span>
+    <span class="track"><span class="fill" style="display:block; width: {{ (100 * value / top) | round(1) if top else 0 }}%"></span></span>
+    <span class="val">{{ value }}</span>
+  </div>
+  {% endfor %}
+{% else %}<p class="muted small">{{ empty }}</p>{% endif %}
+{%- endmacro %}
+
+{# Доли одного целого одной полосой с легендой: ответы гостей #}
+{% macro stack(segments, total) -%}
+{% if total %}
+<div class="stackbar" role="img" aria-label="{% for label, value, color in segments %}{{ label }} {{ value }}{{ ', ' if not loop.last }}{% endfor %}">
+  {% for label, value, color in segments if value %}
+  <span tabindex="0" style="flex: {{ value }}; background: var({{ color }})" data-tip="{{ label }}: {{ value }} ({{ (100 * value / total) | round | int }}%)"></span>
+  {% endfor %}
+</div>
+{% endif %}
+<div class="legend">
+  {% for label, value, color in segments %}<span><i style="background: var({{ color }})"></i>{{ label }}<b>{{ value }}</b></span>{% endfor %}
+</div>
+{%- endmacro %}
+
+{# Столбцы по дням: регистрации гостей за 30 дней. Подписи — HTML, чтобы не масштабировались вместе с SVG #}
+{% macro columns(series, label='гостей') -%}
+{% set top = series | map(attribute=1) | max %}
+{% set w, h = 300, 100 %}
+{% set step = w / (series | length) %}
+{% if top %}
+<div class="colchart">
+  <div class="axis-top small muted">максимум {{ top }} в день</div>
+  <svg class="columns" viewBox="0 0 {{ w }} {{ h }}" preserveAspectRatio="none" role="img" aria-label="Регистрации по дням за 30 дней, максимум {{ top }} в день">
+    <line x1="0" x2="{{ w }}" y1="0.5" y2="0.5" vector-effect="non-scaling-stroke"></line>
+    {% for day, value in series %}
+      {% set bh = (h - 2) * value / top %}
+      <g tabindex="0" data-tip="{{ day[8:10] }}.{{ day[5:7] }}: {{ value }} {{ label }}">
+        <rect class="hit" x="{{ loop.index0 * step }}" y="0" width="{{ step }}" height="{{ h }}"></rect>
+        {% if value %}<rect class="bar" x="{{ loop.index0 * step + step * 0.15 }}" y="{{ h - bh }}" width="{{ step * 0.7 }}" height="{{ bh }}"></rect>{% endif %}
+      </g>
+    {% endfor %}
+    <line class="base" x1="0" x2="{{ w }}" y1="{{ h - 0.5 }}" y2="{{ h - 0.5 }}" vector-effect="non-scaling-stroke"></line>
+  </svg>
+  <div class="axis-x small muted"><span>{{ series[0][0][8:10] }}.{{ series[0][0][5:7] }}</span><span>сегодня</span></div>
+</div>
+{% else %}<p class="muted small">За последние 30 дней регистраций не было</p>{% endif %}
+{%- endmacro %}
+
+{% macro rsvp_pill(rsvp) -%}
+<span class="pill {{ rsvp or '' }}">{{ {'yes': 'Придёт', 'no': 'Не придёт', 'maybe': 'Думает', None: 'Нет ответа'}[rsvp] }}</span>
+{%- endmacro %}
+
+{% macro csrf_field() -%}<input type="hidden" name="csrf" value="{{ csrf }}">{%- endmacro %}

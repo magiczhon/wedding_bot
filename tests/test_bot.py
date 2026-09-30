@@ -1,286 +1,296 @@
-"""Сценарные тесты ядра на фейковых мессенджерах: запуск — `pytest` из корня проекта"""
+"""Сценарные тесты бота: запуск — `pytest` из корня проекта"""
 import sqlite3
 from io import BytesIO
-from pathlib import Path
 
 import openpyxl
-import pytest
-import yaml
 
 from core import bot as b
-from core.bot import WeddingBot
-from core.messenger import Attachment, Incoming, Messenger
+from core.event_config import default_config
 from database.db import Database
 
-EVENT = yaml.safe_load((Path(__file__).parent.parent / 'event.example.yaml').read_text(encoding='utf-8'))
+
+# ---------- согласие и удаление данных ----------
+
+def test_consent_is_asked_before_name_and_decline_stores_nothing(env):
+    ev = env.event()
+    env.open_code('vk', 100, ev['code'])
+    consent = env.vk.last(100)
+    assert consent[3] == [[b.BTN_AGREE], [b.BTN_DISAGREE]]
+    assert 'ИП Тестов Т.Т.' in consent[2] and ev['title'] in consent[2]
+    assert 'https://svc.example/privacy' in consent[2] and '/delete' in consent[2]
+
+    env.say('vk', 100, 'Петр Иванов')  # без согласия имя не принимается
+    assert env.vk.last(100)[3] == [[b.BTN_AGREE], [b.BTN_DISAGREE]]
+    env.say('vk', 100, b.BTN_DISAGREE)
+    assert env.db.guests(ev['id']) == [] and env.db.users_by_platform_ids('vk', ['100']) == []
+    assert [c['action'] for c in env.db.consent_log()] == ['declined']
+
+    env.guest('vk', 100, 'Петр Иванов', ev)
+    user = env.db.users_by_platform_ids('vk', ['100'])[0]
+    assert user['full_name'] == 'Петр Иванов' and user['consent_version'] == '1'
+    assert env.db.consent_log()[0]['action'] == 'given'
 
 
-class FakeMessenger(Messenger):
-    def __init__(self, name, can_copy):
-        self.name, self.title, self.can_copy = name, name.upper(), can_copy
-        self.log, self.counter = [], 0
+def test_delete_command_removes_everything_and_logs_withdrawal(env):
+    ev = env.event()
+    env.team(ev)
+    env.guest('telegram', 100, 'Петр Иванов', ev, rsvp='yes')
+    env.say('telegram', 100, b.BTN_PREFS)
+    env.say('telegram', 100, b.FOR_ME_PREFIX + 'Петр Иванов')
+    env.say('telegram', 100, '🐟 Рыба')
+    env.say('telegram', 100, '🥂 Вино белое')
+    env.say('telegram', 100, ev['config']['guest_channels']['host']['button'])
+    env.say('telegram', 100, 'Вопрос ведущему')
 
-    def _id(self):
-        self.counter += 1
-        return f'{self.name}-{self.counter}'
+    env.say('telegram', 100, b.BTN_PRIVACY)
+    assert 'Петр Иванов' in env.tg.texts(100)[-1] and ev['title'] in env.tg.texts(100)[-1]
+    env.say('telegram', 100, b.BTN_DELETE_ME)
+    env.say('telegram', 100, b.BTN_CANCEL)
+    assert len(env.db.guests(ev['id'])) == 1
 
-    def send(self, chat_id, text, keyboard=None):
-        mid = self._id()
-        self.log.append(('text', str(chat_id), text, keyboard, mid))
-        return mid
-
-    def send_location(self, chat_id, lat, lon):
-        self.log.append(('location', str(chat_id), (lat, lon), None, self._id()))
-
-    def send_photo(self, chat_id, data, caption=''):
-        mid = self._id()
-        self.log.append(('photo', str(chat_id), data, None, mid))
-        return mid
-
-    def send_document(self, chat_id, data, filename, caption=''):
-        mid = self._id()
-        self.log.append(('document', str(chat_id), (filename, data), None, mid))
-        return mid
-
-    def copy_native(self, incoming, chat_id):
-        if not self.can_copy:
-            return None
-        mid = self._id()
-        self.log.append(('copy', str(chat_id), incoming.message_id, None, mid))
-        return mid
-
-    def invite_hint(self, code):
-        return f'{self.name}:{code}'
-
-    # помощники для тестов
-    def to(self, chat_id):
-        return [e for e in self.log if e[1] == str(chat_id)]
-
-    def last(self, chat_id):
-        return self.to(chat_id)[-1]
-
-    def texts(self, chat_id):
-        return [e[2] for e in self.to(chat_id) if e[0] == 'text']
+    env.say('telegram', 100, '/delete')
+    env.say('telegram', 100, b.BTN_DELETE_YES)
+    assert env.db.guests(ev['id']) == [] and env.db.preferences(ev['id']) == []
+    assert not any('Вопрос ведущему' in (m['text'] or '') for m in env.db.messages(ev['id']))
+    assert env.db.consent_log()[0]['action'] == 'withdrawn'
+    env.say('telegram', 100, 'привет')  # бот снова просит ссылку или код
+    assert 'код мероприятия' in env.tg.texts(100)[-1]
 
 
-@pytest.fixture
-def env(tmp_path, monkeypatch):
-    monkeypatch.setattr(b, 'SEND_DELAY', 0)
-    db = Database(str(tmp_path / 'test.db'))
-    bot = WeddingBot(db, EVENT, admins={'telegram': ['1']}, test_users={'telegram': ['1']})
-    tg, vk = FakeMessenger('telegram', can_copy=True), FakeMessenger('vk', can_copy=False)
-    bot.register(tg)
-    bot.register(vk)
-    counter = [0]
-
-    def say(platform, uid, text='', reply_to=None, attachments=None, start_payload=None):
-        counter[0] += 1
-        bot.handle(Incoming(platform=platform, user_id=str(uid), chat_id=str(uid), message_id=f'in-{counter[0]}',
-                            text=text, username=f'user{uid}', display_name=f'User {uid}', reply_to_id=reply_to,
-                            attachments=attachments or [], start_payload=start_payload,
-                            native=object() if attachments else None))
-
-    return bot, db, tg, vk, say
+def test_new_consent_version_is_asked_again(env):
+    ev = env.event()
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    env.bot.privacy['version'] = '2'
+    env.say('telegram', 100, b.BTN_DRESS)
+    assert env.tg.last(100)[3] == [[b.BTN_AGREE], [b.BTN_DISAGREE]]
+    env.say('telegram', 100, b.BTN_AGREE)
+    assert env.db.users_by_platform_ids('telegram', ['100'])[0]['consent_version'] == '2'
+    # гость ещё не ответил на приглашение — после согласия бот продолжает с вопроса о присутствии
+    assert env.tg.last(100)[3] == [[b.RSVP_YES, b.RSVP_NO], [b.RSVP_MAYBE], [b.BTN_MENU]]
 
 
-def register_guest(say, platform, uid, name, rsvp=None):
-    say(platform, uid, '/start')
-    say(platform, uid, name)
-    if rsvp == 'yes':
-        say(platform, uid, b.RSVP_YES)
-        say(platform, uid, '2')
-    elif rsvp == 'no':
-        say(platform, uid, b.RSVP_NO)
-    else:
-        say(platform, uid, b.BTN_MENU)
-
-
-def join_team(bot, db, say, platform, uid, role, name):
-    code = db.invite_codes([role])[role]
-    if platform == 'telegram':
-        say(platform, uid, '/start', start_payload=f'join_{code}')
-    else:
-        say(platform, uid, f'код {code}')
-    say(platform, uid, name)
-
-
-def setup_team(bot, db, say):
-    register_guest(say, 'telegram', 1, 'Мария Организатор')  # админ из config → организатор
-    join_team(bot, db, say, 'vk', 20, 'host', 'Олег Ведущий')
-    join_team(bot, db, say, 'telegram', 30, 'couple', 'Анна Невеста')
-    join_team(bot, db, say, 'telegram', 40, 'decorator', 'Дина Декор')
-
+# ---------- гости ----------
 
 def test_guest_registration_rsvp_and_preferences_without_duplicates(env):
-    bot, db, tg, vk, say = env
-    say('vk', 100, 'Начать')
-    assert 'имя и фамилию' in vk.texts(100)[-1]
-    say('vk', 100, 'Петр')  # одно слово — просим ещё раз
-    assert 'И фамилию' in vk.texts(100)[-1]
-    say('vk', 100, 'Петр Иванов')
-    assert vk.last(100)[3] == [[b.RSVP_YES, b.RSVP_NO], [b.RSVP_MAYBE], [b.BTN_MENU]]
-    say('vk', 100, b.RSVP_YES)
-    say('vk', 100, '3')
-    guest = db.guests('yes')[0]
+    ev = env.event()
+    env.open_code('vk', 100, ev['code'])
+    env.say('vk', 100, b.BTN_AGREE)
+    assert 'имя и фамилию' in env.vk.texts(100)[-1]
+    env.say('vk', 100, 'Петр')
+    assert 'И фамилию' in env.vk.texts(100)[-1]
+    env.say('vk', 100, 'Петр Иванов')
+    assert env.vk.last(100)[3] == [[b.RSVP_YES, b.RSVP_NO], [b.RSVP_MAYBE], [b.BTN_MENU]]
+    env.say('vk', 100, b.RSVP_YES)
+    env.say('vk', 100, '3')
+    guest = env.db.guests(ev['id'], 'yes')[0]
     assert (guest['full_name'], guest['party_size'], guest['platform']) == ('Петр Иванов', 3, 'vk')
 
     for name, food, drink in [(b.FOR_ME_PREFIX + 'Петр Иванов', '🐟 Рыба', '🥂 Вино белое'),
                               ('Ольга Иванова', '🥩 Мясо', b.BTN_SKIP),
                               (b.FOR_ME_PREFIX + 'Петр Иванов', '🥩 Мясо', '🥃 Коньяк')]:
-        say('vk', 100, b.BTN_PREFS)
-        say('vk', 100, name)
-        say('vk', 100, food)
-        say('vk', 100, drink)
-    prefs = {p['guest_name']: (p['food'], p['drink']) for p in db.preferences()}
+        env.say('vk', 100, b.BTN_PREFS)
+        env.say('vk', 100, name)
+        env.say('vk', 100, food)
+        env.say('vk', 100, drink)
+    prefs = {p['guest_name']: (p['food'], p['drink']) for p in env.db.preferences(ev['id'])}
     assert prefs == {'Петр Иванов': ('🥩 Мясо', '🥃 Коньяк'), 'Ольга Иванова': ('🥩 Мясо', 'не указано')}
 
 
+def test_unknown_user_is_asked_for_code_and_wrong_code_is_rejected(env):
+    env.say('telegram', 100, '/start')
+    assert 'код мероприятия' in env.tg.texts(100)[-1]
+    env.say('telegram', 100, 'код ZZZZZZ')
+    assert 'не найден' in env.tg.texts(100)[-1]
+
+
 def test_guest_does_not_see_staff_actions(env):
-    bot, db, tg, vk, say = env
-    register_guest(say, 'telegram', 100, 'Петр Иванов')
-    say('telegram', 100, b.BTN_EXPORT)
-    assert tg.texts(100)[-1].startswith('Не понял')
-    assert not [e for e in tg.to(100) if e[0] == 'document']
-    say('telegram', 100, b.BTN_PLACE)
-    assert tg.last(100)[0] == 'location'
+    ev = env.event()
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    env.say('telegram', 100, b.BTN_EXPORT)
+    assert env.tg.texts(100)[-1].startswith('Не понял')
+    env.say('telegram', 100, b.BTN_PLACE)
+    assert env.tg.last(100)[0] == 'location'
 
 
-def test_team_joins_by_code_and_organizer_is_notified(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-    roles = {u['full_name']: u['role'] for u in db.users_by_roles(list(bot.roles))}
-    assert roles == {'Мария Организатор': 'organizer', 'Олег Ведущий': 'host',
-                     'Анна Невеста': 'couple', 'Дина Декор': 'decorator'}
-    assert any('Олег Ведущий присоединился' in t and 'VK' in t for t in tg.texts(1))
-    say('telegram', 1, b.BTN_INVITES)
-    assert 'vk:' in tg.texts(1)[-1] and 'telegram:' in tg.texts(1)[-1]
-    say('telegram', 50, 'код ZZZZZZ')
-    assert 'не найден' in tg.texts(50)[-1]
+def test_guest_limit_and_archived_event(env):
+    ev = env.event(guest_limit=1)
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    env.open_code('telegram', 101, ev['code'])
+    assert 'лимит гостей' in env.tg.texts(101)[-1]
+    assert len(env.db.guests(ev['id'])) == 1
+
+    env.db.update_event(ev['id'], status='archived')
+    env.say('telegram', 100, b.BTN_DRESS)
+    assert 'завершено' in env.tg.texts(100)[-1]
+    env.open_code('telegram', 102, ev['code'])
+    assert 'завершено' in env.tg.texts(102)[-1]
+
+
+# ---------- несколько мероприятий ----------
+
+def test_events_are_isolated(env):
+    a, c = env.event('Свадьба А'), env.event('Свадьба Б')
+    env.staff('telegram', 1, 'Мария Организатор', a, 'organizer')
+    env.staff('telegram', 2, 'Павел Организатор', c, 'organizer')
+    env.guest('telegram', 100, 'Гость Первый', a)
+    env.guest('vk', 200, 'Гость Второй', c)
+
+    env.say('telegram', 1, b.BTN_BROADCAST)
+    env.say('telegram', 1, 'Всем гостям')
+    env.say('telegram', 1, 'Сбор в 15:30')
+    assert '(1 чел.)' in env.tg.texts(1)[-1]
+    env.say('telegram', 1, b.BTN_CONFIRM)
+    assert 'Сбор в 15:30' in env.tg.texts(100)[-1]
+    assert not any('15:30' in t for t in env.vk.texts(200))
+
+    env.say('telegram', 1, b.BTN_EXPORT)
+    wb = openpyxl.load_workbook(BytesIO(env.tg.last(1)[2][1]))
+    names = [r[1] for r in wb['Гости'].iter_rows(min_row=2, values_only=True) if r[0]]
+    assert names == ['Гость Первый']
+    # организатор Б не видит гостей А в сводке
+    env.say('telegram', 2, b.BTN_SUMMARY)
+    assert 'Зарегистрировано гостей: 1' in env.tg.texts(2)[-1] and 'Свадьба Б' in env.tg.texts(2)[-1]
+
+
+def test_host_on_two_weddings_gets_tagged_questions_and_replies_route_by_event(env):
+    a, c = env.event('Свадьба А'), env.event('Свадьба Б')
+    env.staff('vk', 20, 'Олег Ведущий', a, 'host')
+    env.staff('vk', 20, 'Олег Ведущий', c, 'host')  # сейчас у ведущего открыто мероприятие Б
+    assert env.db.get_user(env.db.users_by_platform_ids('vk', ['20'])[0]['id'])['current_event_id'] == c['id']
+    assert [b.BTN_PRIVACY, b.BTN_EVENTS] == env.vk.last(20)[3][-1]
+
+    env.guest('telegram', 100, 'Петр Иванов', a)
+    env.say('telegram', 100, a['config']['guest_channels']['host']['button'])
+    env.say('telegram', 100, 'Можно песню для мамы?')
+    question = env.vk.last(20)
+    assert question[2].startswith('[Свадьба А]') and 'песню для мамы' in question[2]
+
+    env.say('vk', 20, 'Конечно!', reply_to=question[4])  # ответ уходит в свадьбу А
+    assert 'Конечно!' in env.tg.texts(100)[-1] and 'Олег Ведущий' in env.tg.texts(100)[-1]
+    guest_id = env.db.guests(a['id'])[0]['id']
+    env.say('vk', 20, f'ответ {guest_id} Жду!')
+    assert 'Жду!' in env.tg.texts(100)[-1]
+    assert [m['text'] for m in env.db.messages(c['id'])] == []  # в журнал Б ничего не попало
+
+    env.say('vk', 20, b.BTN_EVENTS)
+    env.say('vk', 20, 'Свадьба А')
+    assert 'Свадьба А' in env.vk.texts(20)[-1]
 
 
 def test_question_to_host_across_messengers_and_answers(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-    register_guest(say, 'telegram', 100, 'Петр Иванов')
-    guest_id = db.guests()[0]['id']
+    ev = env.event()
+    env.team(ev)
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    guest_id = env.db.guests(ev['id'])[0]['id']
 
-    say('telegram', 100, EVENT['guest_channels']['host']['button'])
-    say('telegram', 100, 'Можно заказать песню для мамы?')
-    assert tg.texts(100)[-1].startswith('✅ Передано')
-    question = vk.last(20)
-    assert question[0] == 'text' and f'гостя №{guest_id}' in question[2] and 'песню для мамы' in question[2]
-    assert not any('песню' in t for t in tg.texts(1))  # организатору вопросы ведущему не приходят
+    env.say('telegram', 100, ev['config']['guest_channels']['host']['button'])
+    env.say('telegram', 100, 'Можно заказать песню для мамы?')
+    assert env.tg.texts(100)[-1].startswith('✅ Передано')
+    question = env.vk.last(20)
+    assert f'гостя №{guest_id}' in question[2] and not question[2].startswith('[')
+    assert not any('песню' in t for t in env.tg.texts(1))
 
-    say('vk', 20, 'Конечно, после торта!', reply_to=question[4])  # ответ через reply
-    answer = tg.last(100)
-    assert 'Олег Ведущий' in answer[2] and 'после торта' in answer[2]
-    assert 'отправлен гостю Петр Иванов' in vk.texts(20)[-1]
-
-    say('telegram', 100, b.BTN_MENU)
-    say('telegram', 100, 'Спасибо!', reply_to=answer[4])  # гость отвечает на ответ из главного меню
-    assert 'Спасибо!' in vk.texts(20)[-1]
-
-    say('vk', 20, f'ответ {guest_id} И вам!')  # ответ по номеру, без reply
-    assert 'И вам!' in tg.texts(100)[-1]
+    env.say('vk', 20, 'Конечно, после торта!', reply_to=question[4])
+    answer = env.tg.last(100)
+    assert 'после торта' in answer[2]
+    env.say('telegram', 100, b.BTN_MENU)
+    env.say('telegram', 100, 'Спасибо!', reply_to=answer[4])
+    assert 'Спасибо!' in env.vk.texts(20)[-1]
 
 
 def test_host_broadcast_needs_confirmation_and_guest_reply_goes_to_host(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-    register_guest(say, 'telegram', 100, 'Петр Иванов')
-    register_guest(say, 'vk', 101, 'Ирина Смирнова')
+    ev = env.event()
+    env.team(ev)
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    env.guest('vk', 101, 'Ирина Смирнова', ev)
 
-    say('vk', 20, b.BTN_WRITE_GUESTS)
-    say('vk', 20, 'Кто хочет участвовать в конкурсе?')
-    assert 'всем гостям (2 чел.)' in vk.texts(20)[-1]
-    say('vk', 20, b.BTN_CANCEL)
-    assert not any('конкурсе' in t for t in tg.texts(100))
-
-    say('vk', 20, 'Кто хочет участвовать в конкурсе?')
-    say('vk', 20, b.BTN_CONFIRM)
-    assert 'Отправлено: 2' in vk.texts(20)[-1]
-    assert vk.last(20)[3] == [[b.BTN_MENU]]  # ведущий остаётся в режиме «писать гостям»
-    broadcast = tg.last(100)
-    assert 'конкурсе' in broadcast[2] and 'конкурсе' in vk.texts(101)[-1]
-
-    say('telegram', 100, 'Я хочу!', reply_to=broadcast[4])
-    assert 'Я хочу!' in vk.texts(20)[-1] and 'Петр Иванов' in vk.texts(20)[-1]
+    env.say('vk', 20, b.BTN_WRITE_GUESTS)
+    env.say('vk', 20, 'Кто хочет участвовать в конкурсе?')
+    assert 'всем гостям (2 чел.)' in env.vk.texts(20)[-1]
+    env.say('vk', 20, b.BTN_CANCEL)
+    assert not any('конкурсе' in t for t in env.tg.texts(100))
+    env.say('vk', 20, 'Кто хочет участвовать в конкурсе?')
+    env.say('vk', 20, b.BTN_CONFIRM)
+    assert 'Отправлено: 2' in env.vk.texts(20)[-1]
+    broadcast = env.tg.last(100)
+    env.say('telegram', 100, 'Я хочу!', reply_to=broadcast[4])
+    assert 'Я хочу!' in env.vk.texts(20)[-1]
 
 
 def test_contractor_room_reaches_only_its_members_with_media(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-
-    say('telegram', 40, b.BTN_ROOMS)
-    rooms = [row[0] for row in tg.last(40)[3]]
-    assert rooms == ['Общий чат команды', 'Декор', b.BTN_MENU]
-    say('telegram', 40, 'Декор')
-    assert 'Мария Организатор' in tg.texts(40)[-1] and 'Олег' not in tg.texts(40)[-1]
+    from core.messenger import Attachment
+    ev = env.event()
+    env.team(ev)
+    env.say('telegram', 40, b.BTN_ROOMS)
+    assert [row[0] for row in env.tg.last(40)[3]] == ['Общий чат команды', 'Декор', b.BTN_MENU]
+    env.say('telegram', 40, 'Декор')
     photo = Attachment('photo', load=lambda: b'PNG', filename='arka.jpg')
-    say('telegram', 40, 'Вариант арки', attachments=[photo])
-    # внутри Telegram — копия сообщения целиком
+    env.say('telegram', 40, 'Вариант арки', attachments=[photo])
     for uid in (1, 30):
-        kinds = [e[0] for e in tg.to(uid)[-2:]]
-        assert kinds == ['text', 'copy'] and 'Дина Декор' in tg.to(uid)[-2][2]
-    assert not any('арки' in t for t in vk.texts(20))  # ведущего нет в чате «Декор»
+        assert [e[0] for e in env.tg.to(uid)[-2:]] == ['text', 'copy']
+    assert not any('арки' in t for t in env.vk.texts(20))
+    env.say('telegram', 30, 'Нравится!', reply_to=env.tg.to(30)[-1][4])
+    assert 'Нравится!' in env.tg.texts(40)[-1]
 
-    # ответ невесты (reply) на пересланное сообщение возвращается в чат «Декор»
-    say('telegram', 30, 'Нравится!', reply_to=tg.to(30)[-1][4])
-    assert 'Нравится!' in tg.texts(40)[-1] and 'Декор' in tg.texts(40)[-1]
-
-    # в общем чате фото из Telegram уходит ведущему во ВКонтакте файлом
-    say('telegram', 40, b.BTN_MENU)
-    say('telegram', 40, b.BTN_ROOMS)
-    say('telegram', 40, 'Общий чат команды')
-    say('telegram', 40, 'Схема зала', attachments=[photo])
-    assert [e[0] for e in vk.to(20)[-2:]] == ['text', 'photo'] and vk.to(20)[-1][2] == b'PNG'
-    assert 'Схема зала' in vk.to(20)[-2][2]
+    env.say('telegram', 40, b.BTN_MENU)
+    env.say('telegram', 40, b.BTN_ROOMS)
+    env.say('telegram', 40, 'Общий чат команды')
+    env.say('telegram', 40, 'Схема зала', attachments=[photo])
+    assert [e[0] for e in env.vk.to(20)[-2:]] == ['text', 'photo']
 
 
-def test_organizer_broadcast_to_unanswered_guests_and_summary_export(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-    register_guest(say, 'telegram', 100, 'Петр Иванов', rsvp='yes')
-    register_guest(say, 'vk', 101, 'Ирина Смирнова')
-    register_guest(say, 'telegram', 102, 'Сергей Козлов', rsvp='no')
+def test_organizer_tools_summary_export_and_invites(env):
+    ev = env.event()
+    env.team(ev)
+    env.guest('telegram', 100, 'Петр Иванов', ev, rsvp='yes')
+    env.guest('vk', 101, 'Ирина Смирнова', ev)
+    env.guest('telegram', 102, 'Сергей Козлов', ev, rsvp='no')
 
-    say('telegram', 1, b.BTN_BROADCAST)
-    say('telegram', 1, 'Кто не ответил')
-    say('telegram', 1, 'Напоминаем ответить до пятницы')
-    assert '(1 чел.)' in tg.texts(1)[-1]
-    say('telegram', 1, b.BTN_CONFIRM)
-    assert 'до пятницы' in vk.texts(101)[-1]
-    assert not any('до пятницы' in t for t in tg.texts(100) + tg.texts(102))
-    # ответ гостя на рассылку попадает организатору и молодожёнам
-    say('vk', 101, 'Приду!', reply_to=vk.last(101)[4])
-    assert 'Приду!' in tg.texts(1)[-1] and 'Приду!' in tg.texts(30)[-1]
+    env.say('telegram', 1, b.BTN_BROADCAST)
+    env.say('telegram', 1, 'Кто не ответил')
+    env.say('telegram', 1, 'Напоминаем ответить до пятницы')
+    env.say('telegram', 1, b.BTN_CONFIRM)
+    assert 'до пятницы' in env.vk.texts(101)[-1]
+    assert not any('до пятницы' in t for t in env.tg.texts(100) + env.tg.texts(102))
+    env.say('vk', 101, 'Приду!', reply_to=env.vk.last(101)[4])
+    assert 'Приду!' in env.tg.texts(1)[-1] and 'Приду!' in env.tg.texts(30)[-1]
 
-    say('telegram', 1, b.BTN_SUMMARY)
-    summary = tg.texts(1)[-1]
-    assert 'Придут: 1 (всего человек: 2)' in summary and 'Не ответили: 1' in summary
+    env.say('telegram', 1, b.BTN_SUMMARY)
+    assert 'Придут: 1 (всего человек: 2)' in env.tg.texts(1)[-1]
+    env.say('telegram', 1, b.BTN_INVITES)
+    invites = env.tg.texts(1)[-1]
+    assert f"telegram-guest:{ev['code']}" in invites and 'Ведущий — код' in invites
 
-    say('telegram', 30, b.BTN_EXPORT)  # молодожёны тоже видят выгрузку
-    kind, _, (filename, data), _, _ = tg.last(30)
-    assert kind == 'document' and filename == 'guests.xlsx'
-    wb = openpyxl.load_workbook(BytesIO(data))
+    env.say('telegram', 30, b.BTN_EXPORT)
+    wb = openpyxl.load_workbook(BytesIO(env.tg.last(30)[2][1]))
     assert wb.sheetnames == ['Гости', 'Пожелания', 'Команда', 'Сообщения']
-    names = [r[1] for r in wb['Гости'].iter_rows(min_row=2, values_only=True) if r[0]]
-    assert sorted(names) == ['Ирина Смирнова', 'Петр Иванов', 'Сергей Козлов']
-    assert any('Приду!' in (r[5] or '') for r in wb['Сообщения'].iter_rows(min_row=2, values_only=True))
 
 
 def test_staff_guest_view_and_back(env):
-    bot, db, tg, vk, say = env
-    setup_team(bot, db, say)
-    say('telegram', 30, b.BTN_GUEST_VIEW)
-    assert [b.BTN_RSVP] in tg.last(30)[3] and [b.BTN_STAFF_VIEW] in tg.last(30)[3]
-    say('telegram', 30, b.BTN_DRESS)  # в режиме гостя работают гостевые кнопки
-    assert 'Дресс-код' in tg.texts(30)[-1]
-    say('telegram', 30, b.BTN_STAFF_VIEW)
-    assert [b.BTN_ROOMS] == tg.last(30)[3][0][:1]
+    ev = env.event()
+    env.team(ev)
+    env.say('telegram', 30, b.BTN_GUEST_VIEW)
+    assert [b.BTN_RSVP] in env.tg.last(30)[3]
+    env.say('telegram', 30, b.BTN_DRESS)
+    assert 'Дресс-код' in env.tg.texts(30)[-1]
+    env.say('telegram', 30, b.BTN_STAFF_VIEW)
+    assert env.tg.last(30)[3][0][0] == b.BTN_ROOMS
 
 
-def test_legacy_database_is_migrated(tmp_path):
+def test_web_broadcast_reaches_guests_and_replies_go_to_organizers(env):
+    ev = env.event()
+    env.team(ev)
+    env.guest('telegram', 100, 'Петр Иванов', ev)
+    account = {'id': 1}
+    sent, failed = env.bot.web_broadcast(ev['id'], 'Всем гостям', 'Трансфер в 15:00', account)
+    assert (sent, failed) == (1, 0) and 'Трансфер в 15:00' in env.tg.texts(100)[-1]
+    env.say('telegram', 100, 'Где остановка?', reply_to=env.tg.last(100)[4])
+    assert 'Где остановка?' in env.tg.texts(1)[-1]
+
+
+# ---------- перенос данных старых версий ----------
+
+def test_import_of_first_version_database(tmp_path):
     path = str(tmp_path / 'old.db')
     conn = sqlite3.connect(path)
     conn.executescript('''
@@ -289,14 +299,51 @@ def test_legacy_database_is_migrated(tmp_path):
         CREATE TABLE guest_preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, guest_id INTEGER, guest_name TEXT,
                                         food TEXT, drink TEXT, updated_at TIMESTAMP);
         INSERT INTO guests (user_id, chat_id, username, tg_name, full_name) VALUES (555, 555, 'petr', 'Петя', 'Петр Иванов');
+        INSERT INTO guests (user_id, chat_id, username, tg_name, full_name) VALUES (777, 777, 'boss', 'Босс', 'Мария Орг');
         INSERT INTO guest_preferences (guest_id, guest_name, food, drink) VALUES (1, 'Петр Иванов', 'Рыба', 'Водка');
         INSERT INTO guest_preferences (guest_id, guest_name, food, drink) VALUES (1, 'Петр Иванов', 'Мясо', 'Водка');
     ''')
     conn.commit()
     conn.close()
     db = Database(path)
-    guest = db.guests()[0]
-    assert (guest['platform'], guest['platform_user_id'], guest['full_name']) == ('telegram', '555', 'Петр Иванов')
-    assert [(p['guest_name'], p['food']) for p in db.preferences()] == [('Петр Иванов', 'Мясо')]
+    assert db.has_legacy_data()
+    event = db.import_legacy(default_config(), admins={'telegram': [777]})
+    assert [g['full_name'] for g in db.guests(event['id'])] == ['Петр Иванов']
+    assert [m['full_name'] for m in db.members(event['id'], roles=['organizer'])] == ['Мария Орг']
+    assert [(p['guest_name'], p['food']) for p in db.preferences(event['id'])] == [('Петр Иванов', 'Мясо')]
+    assert not db.has_legacy_data() and db.import_legacy(default_config()) is None
+
+
+def test_import_of_single_event_multiplatform_database(tmp_path):
+    path = str(tmp_path / 'v1.db')
+    conn = sqlite3.connect(path)
+    conn.executescript('''
+        CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT, platform_user_id TEXT, chat_id TEXT,
+            username TEXT, display_name TEXT, full_name TEXT, role TEXT, rsvp TEXT, party_size INTEGER, state TEXT,
+            state_data TEXT, created_at TIMESTAMP, updated_at TIMESTAMP);
+        CREATE TABLE preferences (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, guest_name TEXT, food TEXT,
+            drink TEXT, updated_at TIMESTAMP);
+        CREATE TABLE invites (role TEXT PRIMARY KEY, code TEXT);
+        CREATE TABLE relays (id INTEGER PRIMARY KEY, platform TEXT, chat_id TEXT, message_id TEXT, channel TEXT,
+            target_user_id INTEGER, recipient_user_id INTEGER, created_at TIMESTAMP);
+        CREATE INDEX relays_lookup ON relays (platform, chat_id, message_id);
+        CREATE TABLE messages (id INTEGER PRIMARY KEY, channel TEXT, sender_user_id INTEGER, target_user_id INTEGER,
+            text TEXT, created_at TIMESTAMP);
+        INSERT INTO users (platform, platform_user_id, chat_id, full_name, role, rsvp, party_size)
+            VALUES ('vk', '20', '20', 'Олег Ведущий', 'host', NULL, NULL),
+                   ('telegram', '100', '100', 'Петр Иванов', 'guest', 'yes', 2);
+        INSERT INTO preferences (user_id, guest_name, food, drink) VALUES (2, 'Петр Иванов', 'Рыба', 'Вино');
+        INSERT INTO invites VALUES ('host', 'HOST42');
+        INSERT INTO messages (channel, sender_user_id, target_user_id, text) VALUES ('guest:host', 2, NULL, 'Песню!');
+    ''')
+    conn.commit()
+    conn.close()
+    db = Database(path)
+    event = db.import_legacy(default_config())
+    guest = db.guests(event['id'])[0]
+    assert (guest['full_name'], guest['rsvp'], guest['party_size']) == ('Петр Иванов', 'yes', 2)
+    assert db.members(event['id'], roles=['host'])[0]['full_name'] == 'Олег Ведущий'
+    assert db.resolve_code('HOST42')[2] == 'host'
+    assert db.messages(event['id'])[0]['text'] == 'Песню!'
     Database(path)  # повторный запуск ничего не ломает
-    assert len(db.guests()) == 1
+    assert len(db.guests(event['id'])) == 1

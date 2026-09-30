@@ -7,11 +7,18 @@
         "token": "VK_COMMUNITY_TOKEN",
         "group_id": 123456789
     },
-    "admins": {
-        "telegram": [111111111],
-        "vk": [222222222]
+    "web": {
+        "host": "127.0.0.1",
+        "port": 8080,
+        "secret_key": "замените-на-длинную-случайную-строку",
+        "public_url": "https://invite.example.ru",
+        "https": true
     },
-    "test_users": {
-        "telegram": [111111111]
-    }
+    "privacy": {
+        "operator": "Иванов Иван Иванович, самозанятый, ИНН 000000000000",
+        "contacts": "privacy@example.ru",
+        "retention": "до окончания мероприятия и 3 месяца после него",
+        "version": "1"
+    },
+    "default_guest_limit": 30
 }

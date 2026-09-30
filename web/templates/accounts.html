@@ -1,0 +1,44 @@
+{% extends 'base.html' %}
+{% import '_macros.html' as m with context %}
+{% block title %}Аккаунты{% endblock %}
+{% block content %}
+<h1>Аккаунты</h1>
+<p class="sub">Организатор видит только свои мероприятия; владелец сервиса — все.</p>
+<div class="grid cols-2">
+  <div class="card">
+    <div class="table-wrap"><table>
+      <thead><tr><th>Логин</th><th>Имя</th><th class="num">Мероприятий</th><th></th></tr></thead>
+      <tbody>
+      {% for a in accounts %}
+      <tr>
+        <td>{{ a.login }}{% if a.is_superadmin %} <span class="pill">владелец</span>{% endif %}</td>
+        <td>{{ a.name }}</td>
+        <td class="num">{{ a.events }}</td>
+        <td>
+          <details><summary class="small">изменить</summary>
+            <form method="post" action="{{ url_for('account_password', account_id=a.id) }}" class="actions" style="margin-top: 6px;">
+              {{ m.csrf_field() }}<input type="password" name="password" placeholder="Новый пароль" minlength="8" autocomplete="new-password" aria-label="Новый пароль" style="width: 160px;"><button class="small secondary">Сменить пароль</button></form>
+            {% if a.id != account.id %}
+            <form method="post" action="{{ url_for('account_delete', account_id=a.id) }}" onsubmit="return confirm('Удалить аккаунт {{ a.login|e }}?');" style="margin-top: 6px;">
+              {{ m.csrf_field() }}<button class="link small">Удалить аккаунт</button></form>
+            {% endif %}
+          </details>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+  </div>
+  <div class="card">
+    <h2>Новый аккаунт</h2>
+    <form method="post">
+      {{ m.csrf_field() }}
+      <label for="login">Логин</label><input type="text" id="login" name="login" required autocomplete="off">
+      <label for="name">Имя или агентство</label><input type="text" id="name" name="name">
+      <label for="password">Пароль (не короче 8 символов)</label><input type="password" id="password" name="password" minlength="8" required autocomplete="new-password">
+      <label class="actions"><input type="checkbox" name="is_superadmin" value="1"> Владелец сервиса (видит всё)</label>
+      <p><button>Создать</button></p>
+    </form>
+  </div>
+</div>
+{% endblock %}

@@ -127,6 +127,12 @@ class TelegramMessenger(Messenger):
     def invite_hint(self, code):
         return f'ссылка https://t.me/{self.me.username}?start=join_{code}'
 
+    def guest_hint(self, code):
+        return f'ссылка {self.guest_link(code)}'
+
+    def guest_link(self, code):
+        return f'https://t.me/{self.me.username}?start=ev_{code}'
+
     def run(self):
         logger.info(f'Telegram bot @{self.me.username} started')
         self.bot.infinity_polling(skip_pending=False)
